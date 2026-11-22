@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -108,23 +109,58 @@ def load_trajectory_csv(path: Path) -> list[SimulationStep]:
                 f"Invalid CSV columns in {in_path}: expected {CSV_COLUMNS}, got {reader.fieldnames}"
             )
         steps: list[SimulationStep] = []
-        for row in reader:
+        for line_num, row in enumerate(reader, start=2):
+            if None in row:
+                raise ValueError(
+                    f"Extra trailing CSV columns at line {line_num} in {in_path}: {row[None]!r}"
+                )
+            missing = [col for col in CSV_COLUMNS if row.get(col) is None]
+            if missing:
+                raise ValueError(
+                    f"Missing CSV column(s) {missing} at line {line_num} in {in_path}"
+                )
+
+            raw_step = row["step"]
+            assert raw_step is not None
+            step_str = raw_step.strip()
+            if not (step_str.isascii() and step_str.isdigit()):
+                raise ValueError(
+                    f"Invalid non-negative integer 'step' {raw_step!r} at line {line_num} in {in_path}"
+                )
+            step_val = int(step_str)
+
+            parsed: dict[str, float] = {}
+            for col in CSV_COLUMNS[1:]:
+                raw_val = row[col]
+                assert raw_val is not None
+                val_str = raw_val.strip()
+                if not val_str:
+                    raise ValueError(
+                        f"Empty numeric value for '{col}' at line {line_num} in {in_path}"
+                    )
+                val = float(val_str)
+                if not math.isfinite(val):
+                    raise ValueError(
+                        f"Non-finite value {raw_val!r} for '{col}' at line {line_num} in {in_path}"
+                    )
+                parsed[col] = val
+
             steps.append(
                 SimulationStep(
-                    step=int(row["step"]),
-                    time_s=float(row["time_s"]),
-                    theta1_ref_deg=float(row["theta1_ref_deg"]),
-                    theta2_ref_deg=float(row["theta2_ref_deg"]),
-                    theta1_actual_deg=float(row["theta1_actual_deg"]),
-                    theta2_actual_deg=float(row["theta2_actual_deg"]),
-                    error1_deg=float(row["error1_deg"]),
-                    error2_deg=float(row["error2_deg"]),
-                    u1=float(row["u1"]),
-                    u2=float(row["u2"]),
-                    x1=float(row["x1"]),
-                    y1=float(row["y1"]),
-                    x=float(row["x"]),
-                    y=float(row["y"]),
+                    step=step_val,
+                    time_s=parsed["time_s"],
+                    theta1_ref_deg=parsed["theta1_ref_deg"],
+                    theta2_ref_deg=parsed["theta2_ref_deg"],
+                    theta1_actual_deg=parsed["theta1_actual_deg"],
+                    theta2_actual_deg=parsed["theta2_actual_deg"],
+                    error1_deg=parsed["error1_deg"],
+                    error2_deg=parsed["error2_deg"],
+                    u1=parsed["u1"],
+                    u2=parsed["u2"],
+                    x1=parsed["x1"],
+                    y1=parsed["y1"],
+                    x=parsed["x"],
+                    y=parsed["y"],
                 )
             )
     if not steps:
@@ -229,13 +265,27 @@ def _compare_steps(
                 "reason": f"Step index mismatch: expected {exp_row.step}, got {act_row.step}",
             }
         for field in float_fields:
-            diff = abs(getattr(exp_row, field) - getattr(act_row, field))
-            if diff > max_diff:
+            exp_val = float(getattr(exp_row, field))
+            act_val = float(getattr(act_row, field))
+            if not (math.isfinite(exp_val) and math.isfinite(act_val)):
+                return {
+                    "matched": False,
+                    "rows": len(actual),
+                    "max_abs_diff": None,
+                    "worst_field": field,
+                    "worst_step": exp_row.step,
+                    "reason": (
+                        f"Non-finite value encountered on {field} at step {exp_row.step}: "
+                        f"expected={exp_val}, actual={act_val}"
+                    ),
+                }
+            diff = abs(exp_val - act_val)
+            if not math.isfinite(diff) or diff > max_diff:
                 max_diff = diff
                 worst_field = field
                 worst_step = exp_row.step
 
-    matched = max_diff <= atol
+    matched = math.isfinite(max_diff) and max_diff <= atol
     info: dict[str, Any] = {
         "matched": matched,
         "rows": len(actual),
@@ -255,6 +305,8 @@ def verify_datasets(
     atol: float = 1e-5,
 ) -> dict[str, Any]:
     """Re-run simulations and verify committed CSVs match within tolerance."""
+    if not math.isfinite(atol) or atol < 0.0:
+        raise ValueError(f"atol must be non-negative and finite, got {atol!r}")
     target_dir = Path(data_dir)
     expected_baseline = simulate_step(
         theta1_ref_deg=30.0,

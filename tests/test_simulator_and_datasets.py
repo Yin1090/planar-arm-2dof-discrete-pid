@@ -8,6 +8,7 @@ import pytest
 
 from planar_arm_pid.datasets import (
     CSV_COLUMNS,
+    _compare_steps,
     default_baseline_config,
     default_multi_waypoint_segments,
     load_trajectory_csv,
@@ -18,6 +19,7 @@ from planar_arm_pid.kinematics import ArmGeometry
 from planar_arm_pid.pid import PIDGains
 from planar_arm_pid.simulator import (
     SimulationConfig,
+    SimulationStep,
     WaypointSegment,
     simulate_step,
     simulate_waypoints,
@@ -126,3 +128,82 @@ def test_committed_datasets_match_fresh_simulation_and_roundtrip(tmp_path: Path)
     assert verification["verified"] is True
     assert verification["datasets"]["baseline_step_30deg.csv"]["matched"] is True
     assert verification["datasets"]["multi_waypoint_trajectory.csv"]["matched"] is True
+
+
+@pytest.mark.parametrize("bad_token", ["nan", "NaN", "inf", "-inf"])
+def test_load_trajectory_csv_rejects_non_finite_cells(tmp_path: Path, bad_token: str) -> None:
+    baseline_csv = REPO_ROOT / "data" / "baseline_step_30deg.csv"
+    lines = baseline_csv.read_text(encoding="utf-8").splitlines()
+    row_fields = lines[1].split(",")
+    row_fields[4] = bad_token
+    bad_csv = tmp_path / "non_finite.csv"
+    bad_csv.write_text("\n".join([lines[0], ",".join(row_fields)]) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Non-finite"):
+        load_trajectory_csv(bad_csv)
+
+
+def test_load_trajectory_csv_rejects_extra_trailing_and_short_and_bad_step(tmp_path: Path) -> None:
+    baseline_csv = REPO_ROOT / "data" / "baseline_step_30deg.csv"
+    lines = baseline_csv.read_text(encoding="utf-8").splitlines()
+
+    extra_csv = tmp_path / "extra.csv"
+    extra_csv.write_text(lines[0] + "\n" + lines[1] + ",99.0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Extra trailing"):
+        load_trajectory_csv(extra_csv)
+
+    short_csv = tmp_path / "short.csv"
+    short_fields = lines[1].split(",")[:-1]
+    short_csv.write_text(lines[0] + "\n" + ",".join(short_fields) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Missing CSV"):
+        load_trajectory_csv(short_csv)
+
+    bad_step_fields = lines[1].split(",")
+    bad_step_fields[0] = "1.5"
+    bad_step_csv = tmp_path / "bad_step.csv"
+    bad_step_csv.write_text(
+        lines[0] + "\n" + ",".join(bad_step_fields) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="Invalid non-negative integer"):
+        load_trajectory_csv(bad_step_csv)
+
+
+def test_verify_datasets_and_compare_steps_reject_nan_tamper(tmp_path: Path) -> None:
+    data_dir = REPO_ROOT / "data"
+    tamper_dir = tmp_path / "tamper_data"
+    tamper_dir.mkdir()
+
+    baseline_lines = (data_dir / "baseline_step_30deg.csv").read_text(encoding="utf-8").splitlines()
+    tampered_row = baseline_lines[101].split(",")
+    tampered_row[4] = "nan"
+    baseline_lines[101] = ",".join(tampered_row)
+    (tamper_dir / "baseline_step_30deg.csv").write_text(
+        "\n".join(baseline_lines) + "\n", encoding="utf-8"
+    )
+    (tamper_dir / "multi_waypoint_trajectory.csv").write_text(
+        (data_dir / "multi_waypoint_trajectory.csv").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    report = verify_datasets(data_dir=tamper_dir, atol=1e-5)
+    assert report["verified"] is False
+    assert report["datasets"]["baseline_step_30deg.csv"]["matched"] is False
+
+    valid_step = SimulationStep(0, 0.0, 30.0, 30.0, 10.0, 10.0, 20.0, 20.0, 1.0, 1.0, 5.0, 0.0, 10.0, 0.0)
+    nan_step = SimulationStep(0, 0.0, 30.0, 30.0, float("nan"), 10.0, 20.0, 20.0, 1.0, 1.0, 5.0, 0.0, 10.0, 0.0)
+    direct = _compare_steps([valid_step], [nan_step], atol=1e-5)
+    assert direct["matched"] is False
+    assert "Non-finite" in direct["reason"]
+
+
+def test_dt2_mismatch_uses_shared_dt_for_joint2_iae_integration() -> None:
+    cfg = SimulationConfig(
+        geometry=ArmGeometry(5.0, 5.0),
+        gains1=PIDGains(15.0, 0.1, 0.2),
+        gains2=PIDGains(15.0, 0.1, 0.2),
+        dt=0.01,
+        dt2=0.02,
+    )
+    res = simulate_step(30.0, 30.0, duration_s=2.0, config=cfg)
+    expected_iae_dt = sum(abs(s.error2_deg) for s in res.steps) * cfg.dt
+    assert res.joint2_metrics.iae_deg_s == pytest.approx(expected_iae_dt, rel=1e-12, abs=1e-12)

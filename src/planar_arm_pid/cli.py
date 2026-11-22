@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -29,11 +30,11 @@ def _emit(payload: dict[str, Any], as_json: bool) -> None:
         print(f"{key}: {val}")
 
 
-def _add_json_flag(parser: argparse.ArgumentParser) -> None:
+def _add_json_flag(parser: argparse.ArgumentParser, default: Any = False) -> None:
     parser.add_argument(
         "--json",
         action="store_true",
-        default=False,
+        default=default,
         help="Emit machine-readable JSON output.",
     )
 
@@ -43,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="planar-arm-pid",
         description="2-DOF Planar Arm Discrete PID & Forward Kinematics Simulator",
     )
-    _add_json_flag(parser)
+    _add_json_flag(parser, default=False)
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_bench = sub.add_parser(
@@ -53,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--duration", type=float, default=15.0)
     p_bench.add_argument("--output-csv", type=Path, default=None)
     p_bench.add_argument("--out-plot-dir", type=Path, default=None)
-    _add_json_flag(p_bench)
+    _add_json_flag(p_bench, default=argparse.SUPPRESS)
 
     p_sim = sub.add_parser(
         "simulate",
@@ -74,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sim.add_argument("--duration", type=float, default=15.0)
     p_sim.add_argument("--out-csv", type=Path, default=None)
     p_sim.add_argument("--out-plot-dir", type=Path, default=None)
-    _add_json_flag(p_sim)
+    _add_json_flag(p_sim, default=argparse.SUPPRESS)
 
     p_wp = sub.add_parser(
         "waypoints",
@@ -88,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_wp.add_argument("--dt", type=float, default=0.01)
     p_wp.add_argument("--out-csv", type=Path, default=None)
     p_wp.add_argument("--out-plot-dir", type=Path, default=None)
-    _add_json_flag(p_wp)
+    _add_json_flag(p_wp, default=argparse.SUPPRESS)
 
     p_plot = sub.add_parser(
         "plot",
@@ -99,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_plot.add_argument("--prefix", type=str, default="arm")
     p_plot.add_argument("--l1", type=float, default=5.0)
     p_plot.add_argument("--l2", type=float, default=5.0)
-    _add_json_flag(p_plot)
+    _add_json_flag(p_plot, default=argparse.SUPPRESS)
 
     p_ver = sub.add_parser(
         "verify-datasets",
@@ -107,21 +108,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ver.add_argument("--data-dir", type=Path, default=Path("data"))
     p_ver.add_argument("--atol", type=float, default=1e-5)
-    _add_json_flag(p_ver)
+    _add_json_flag(p_ver, default=argparse.SUPPRESS)
 
     p_ui = sub.add_parser(
         "interactive",
         help="Launch optional Tkinter interactive PID tuning window.",
     )
-    _add_json_flag(p_ui)
+    _add_json_flag(p_ui, default=argparse.SUPPRESS)
 
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    as_json = bool(getattr(args, "json", False))
+def _dispatch(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    as_json: bool,
+) -> int:
 
     if args.command == "benchmark":
         cfg = default_baseline_config()
@@ -220,3 +222,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    as_json = bool(getattr(args, "json", False))
+    try:
+        return _dispatch(parser, args, as_json)
+    except (ValueError, FileNotFoundError) as exc:
+        if as_json:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1

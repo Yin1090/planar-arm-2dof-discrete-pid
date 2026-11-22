@@ -12,6 +12,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from planar_arm_pid.kinematics import forward_kinematics, link_polyline, workspace_bounds
+from planar_arm_pid.pid import PIDGains
 from planar_arm_pid.simulator import SimulationConfig, SimulationResult, simulate_step
 
 
@@ -172,6 +173,8 @@ def launch_interactive_ui(initial_config: SimulationConfig | None = None) -> int
     try:
         import tkinter as tk
         from tkinter import ttk
+
+        matplotlib.use("TkAgg", force=False)
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     except Exception as exc:  # pragma: no cover - environment dependent
         print(f"Interactive UI unavailable (Tkinter import failed): {exc}", file=sys.stderr)
@@ -187,7 +190,6 @@ def launch_interactive_ui(initial_config: SimulationConfig | None = None) -> int
         return 1
 
     cfg = initial_config if initial_config is not None else SimulationConfig()
-    matplotlib.use("TkAgg", force=False)
     root.title("2-DOF Planar Arm Discrete PID Simulator")
 
     controls = ttk.Frame(root, padding=10)
@@ -208,17 +210,41 @@ def launch_interactive_ui(initial_config: SimulationConfig | None = None) -> int
             row=row_idx, column=1, padx=6, pady=3
         )
 
+    status_var = tk.StringVar(value="Ready")
+
     fig = Figure(figsize=(8.0, 5.2), dpi=100)
     canvas = FigureCanvasTkAgg(fig, master=root)
     canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     def _run_update() -> None:
+        try:
+            theta1_ref = float(vars_map["theta1"].get())
+            theta2_ref = float(vars_map["theta2"].get())
+            kp_val = float(vars_map["kp"].get())
+            ki_val = float(vars_map["ki"].get())
+            kd_val = float(vars_map["kd"].get())
+            duration_val = float(vars_map["duration"].get())
+            gains = PIDGains(kp=kp_val, ki=ki_val, kd=kd_val)
+            run_cfg = SimulationConfig(
+                geometry=cfg.geometry,
+                gains1=gains,
+                gains2=gains,
+                dt=cfg.dt,
+                dt2=cfg.dt2,
+                theta1_init_deg=cfg.theta1_init_deg,
+                theta2_init_deg=cfg.theta2_init_deg,
+            )
+            res = simulate_step(
+                theta1_ref_deg=theta1_ref,
+                theta2_ref_deg=theta2_ref,
+                duration_s=duration_val,
+                config=run_cfg,
+            )
+        except (tk.TclError, ValueError) as exc:
+            status_var.set(f"Input error: {exc}")
+            return
+
         fig.clear()
-        res = simulate_step(
-            theta1_ref_deg=vars_map["theta1"].get(),
-            theta2_ref_deg=vars_map["theta2"].get(),
-            duration_s=vars_map["duration"].get(),
-        )
         ax1, ax2 = fig.subplots(1, 2)
         times = [s.time_s for s in res.steps]
         ax1.plot(times, [s.theta1_actual_deg for s in res.steps], label="Theta1")
@@ -235,9 +261,13 @@ def launch_interactive_ui(initial_config: SimulationConfig | None = None) -> int
         ax2.legend()
         ax2.grid(True)
         canvas.draw()
+        status_var.set(f"OK: final=({res.final_pose.x:.2f}, {res.final_pose.y:.2f})")
 
     ttk.Button(controls, text="Run", command=_run_update).grid(
         row=len(vars_map), column=0, columnspan=2, pady=10
+    )
+    ttk.Label(controls, textvariable=status_var, wraplength=180).grid(
+        row=len(vars_map) + 1, column=0, columnspan=2, sticky="w", pady=4
     )
     _run_update()
     root.mainloop()

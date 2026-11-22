@@ -21,7 +21,14 @@ def _validate_positive_finite(name: str, value: float) -> float:
 
 @dataclass(frozen=True)
 class SimulationConfig:
-    """Configuration for dual-joint discrete PID and 2-DOF arm simulation."""
+    """Configuration for dual-joint discrete PID and 2-DOF arm simulation.
+
+    ``dt`` defines the shared simulation sample clock (``time_s = k * dt``) and
+    Joint 1 PID step. When ``dt2`` is specified and differs from ``dt``, it
+    scales Joint 2's per-tick discrete PID integrator/derivative step alongside
+    the ``dt`` simulation clock (matching LabVIEW ``FINAL2.vi`` where both PID
+    blocks run once per While Loop tick).
+    """
 
     geometry: ArmGeometry = ArmGeometry()
     gains1: PIDGains = PIDGains()
@@ -206,7 +213,7 @@ def _finalize_result(
 
     m1 = compute_joint_metrics(times, r1, a1, e1, config.dt, config.theta1_init_deg)
     m2 = compute_joint_metrics(
-        times, r2, a2, e2, config.effective_dt2, config.theta2_init_deg
+        times, r2, a2, e2, config.dt, config.theta2_init_deg
     )
     last = steps[-1]
     final_pose = forward_kinematics(
