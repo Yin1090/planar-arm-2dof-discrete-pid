@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the calibrated 30 deg LabVIEW FINAL2.vi baseline benchmark.",
     )
     p_bench.add_argument("--duration", type=float, default=15.0)
-    p_bench.add_argument("--output-csv", type=Path, default=None)
+    p_bench.add_argument("--output-csv", "--out-csv", dest="output_csv", type=Path, default=None)
     p_bench.add_argument("--out-plot-dir", type=Path, default=None)
     _add_json_flag(p_bench, default=argparse.SUPPRESS)
 
@@ -230,7 +230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     as_json = bool(getattr(args, "json", False))
     try:
         return _dispatch(parser, args, as_json)
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, OSError, UnicodeDecodeError) as exc:
         if as_json:
             print(json.dumps({"error": str(exc)}, indent=2))
         else:

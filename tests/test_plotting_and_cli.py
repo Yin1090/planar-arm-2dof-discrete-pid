@@ -315,3 +315,19 @@ def test_interactive_ui_wires_gains_initial_config_and_handles_invalid_inputs() 
     # Also verify cli_main(['interactive', '--json']) handles headless TclError cleanly
     with patch.dict(sys.modules, {"tkinter": None}):
         assert cli_main(["interactive", "--json"]) == 1
+
+
+def test_cli_benchmark_out_csv_alias_and_malformed_csv_error(tmp_path: Path) -> None:
+    out_csv = tmp_path / "bench_alias.csv"
+    proc = _run_cli(["benchmark", "--out-csv", str(out_csv), "--json"])
+    assert proc.returncode == 0
+    payload = json.loads(proc.stdout)
+    assert Path(payload["output_csv"]) == out_csv
+    assert out_csv.is_file()
+
+    bad_csv = tmp_path / "bad_utf8.csv"
+    bad_csv.write_bytes(b"\xff\xfe\x00\x80invalid")
+    bad_proc = _run_cli(["plot", "--input-csv", str(bad_csv), "--out-dir", str(tmp_path / "plots"), "--json"])
+    assert bad_proc.returncode == 1
+    bad_payload = json.loads(bad_proc.stdout)
+    assert "error" in bad_payload and bad_payload["error"]

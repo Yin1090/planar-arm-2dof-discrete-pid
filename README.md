@@ -66,12 +66,13 @@ With $L_1 = L_2 = 5.0$, $\theta_{1,\text{ref}} = \theta_{2,\text{ref}} = 30^\cir
 - [`data/multi_waypoint_trajectory.csv`](data/multi_waypoint_trajectory.csv): `1,200` rows ($4 \times 3.0\text{ s}$ phases at $\Delta t = 0.01\text{ s}$) tracking `(30°, 30°) → (60°, -30°) → (90°, -45°) → (0°, 0°)`.
 - **CSV Schema**: `step, time_s, theta1_ref_deg, theta2_ref_deg, theta1_actual_deg, theta2_actual_deg, error1_deg, error2_deg, u1, u2, x1, y1, x, y`
 
-| Reference & Simulation Diagrams | |
+| Reference Diagrams | Simulation & Analysis |
 |---|---|
 | ![System Block Diagram](docs/images/01_system_block_diagram.png) | ![Discrete PID Equations](docs/images/02_discrete_pid_equations.png) |
 | ![LabVIEW Front Panel](docs/images/03_labview_front_panel.png) | ![LabVIEW Block Diagram PID1 & FK](docs/images/04_labview_block_diagram_pid1_fk.png) |
 | ![LabVIEW Block Diagram PID2](docs/images/05_labview_block_diagram_pid2.png) | ![Baseline Step Response](docs/images/sim_baseline_step_response.png) |
-| ![Multi-Waypoint Planar Arm](docs/images/sim_multi_waypoint_arm.png) | ![LabVIEW Table & Tuning](docs/images/06_labview_simulation_table.png) |
+| ![Multi-Waypoint Planar Arm](docs/images/sim_multi_waypoint_arm.png) | ![LabVIEW Table](docs/images/06_labview_simulation_table.png) |
+| ![PID Gain Tuning Notes](docs/images/07_pid_gain_tuning_notes.png) | *Discrete PID gain tuning notes & Shift-Register calibration* |
 
 ### Installation & Usage
 
@@ -114,7 +115,7 @@ python -m pytest -v
 Coverage spans 5 test modules:
 - `tests/test_pid.py` — Exact first-step LabVIEW recurrence, Shift-Register `reset()`, zero gains, negative targets, `dt`/`NaN`/`Inf` validation.
 - `tests/test_kinematics.py` — Analytical 2-DOF FK poses, `link_polyline`, workspace bounds, invalid link lengths.
-- `tests/test_simulator_and_datasets.py` — `1501`-step benchmark (`30.0123°`, `(6.83, 6.83)` at `k=1230`), `600 s` asymptotic convergence, independent joint gains, mid-run reset, `1200`-row multi-waypoint tracking, and CSV round-trip verification.
+- `tests/test_simulator_and_datasets.py` — `1501`-step benchmark (`30.0123°`, `(6.83, 6.83)` at `k=1230`), `750 s` asymptotic convergence, independent joint gains, mid-run reset, `1200`-row multi-waypoint tracking, and CSV round-trip verification.
 - `tests/test_plotting_and_cli.py` — Headless `Agg` PNG generation and subprocess CLI verification (`benchmark`, `simulate`, `waypoints`, `plot`, `verify-datasets`).
 - `tests/test_assets_and_hygiene.py` — `FINAL2.vi` SHA-256 + zlib control verification, PNG integrity, bilingual README rubric & link checks, and privacy/hygiene scans.
 
@@ -138,13 +139,17 @@ Kho lưu trữ này hiện thực hoàn chỉnh hệ thống **điều khiển P
 
 Với mỗi khớp $i \in \{1, 2\}$ lưu trạng thái $(\theta_{\text{prev}}, e_{\text{prev}}, I_{\text{prev}})$ khởi tạo bằng $(0, 0, 0)$:
 
-1. $e_k = \theta_{\text{ref}} - \theta_{\text{prev}}$
-2. $P_k = K_p \cdot e_k$
-3. $I_k = I_{\text{prev}} + e_k \cdot \Delta t$, $I_{\text{out},k} = K_i \cdot I_k$
-4. $D_k = K_d \cdot (e_k - e_{\text{prev}}) / \Delta t$
-5. $u_k = P_k + I_{\text{out},k} + D_k$
-6. $\theta_k = \theta_{\text{prev}} + u_k \cdot \Delta t$
-7. $\text{Error}_k = \theta_{\text{ref}} - \theta_k$
+$$
+\begin{aligned}
+e_k &= \theta_{\text{ref}} - \theta_{\text{prev}} \\
+P_k &= K_p \cdot e_k \\
+I_k &= I_{\text{prev}} + e_k \cdot \Delta t, \qquad I_{\text{out},k} = K_i \cdot I_k \\
+D_k &= K_d \cdot \frac{e_k - e_{\text{prev}}}{\Delta t} \\
+u_k &= P_k + I_{\text{out},k} + D_k \\
+\theta_k &= \theta_{\text{prev}} + u_k \cdot \Delta t \\
+\text{Error}_k &= \theta_{\text{ref}} - \theta_k
+\end{aligned}
+$$
 
 #### 2. Động học thuận cánh tay phẳng 2-DOF
 
